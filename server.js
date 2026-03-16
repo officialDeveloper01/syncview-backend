@@ -6,6 +6,10 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 
+app.get("/", (req, res) => {
+  res.send("SyncView backend running");
+});
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -28,17 +32,18 @@ io.on("connection", (socket) => {
       rooms[roomId] = [];
     }
 
-    rooms[roomId].push(socket.id);
+    if (!rooms[roomId].includes(socket.id)) {
+      rooms[roomId].push(socket.id);
+    }
 
     io.to(roomId).emit("system-message", `${username} joined the room`);
-
   });
 
-  socket.on("send-message", (data) => {
+  socket.on("send-message", ({ roomId, message }) => {
 
-    io.to(data.roomId).emit("receive-message", {
+    io.to(roomId).emit("receive-message", {
       username: socket.username,
-      message: data.message
+      message
     });
 
   });
@@ -47,7 +52,7 @@ io.on("connection", (socket) => {
 
     const roomId = socket.roomId;
 
-    if (!roomId) return;
+    if (!roomId || !rooms[roomId]) return;
 
     rooms[roomId] = rooms[roomId].filter(id => id !== socket.id);
 
