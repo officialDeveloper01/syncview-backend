@@ -32,12 +32,16 @@ io.on("connection", (socket) => {
       rooms[roomId] = [];
     }
 
-    if (!rooms[roomId].includes(socket.id)) {
-      rooms[roomId].push(socket.id);
-    }
+    rooms[roomId].push(socket.id);
+
+    const isHost = rooms[roomId][0] === socket.id;
+
+    socket.emit("host-status", isHost);
 
     io.to(roomId).emit("system-message", `${username} joined the room`);
+
   });
+
 
   socket.on("send-message", ({ roomId, message }) => {
 
@@ -47,6 +51,14 @@ io.on("connection", (socket) => {
     });
 
   });
+
+
+  socket.on("set-video", ({ roomId, videoId }) => {
+
+    io.to(roomId).emit("load-video", videoId);
+
+  });
+
 
   socket.on("disconnect", () => {
 
