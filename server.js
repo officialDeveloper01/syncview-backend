@@ -27,6 +27,25 @@ const rooms = {};
 
 io.on("connection", (socket) => {
 
+  // ================= CHECK ROOM =================
+  socket.on("check-room", ({ roomId }) => {
+
+    const room = rooms[roomId];
+
+    if (!room) {
+      socket.emit("room-check-result", {
+        exists: false
+      });
+      return;
+    }
+
+    socket.emit("room-check-result", {
+      exists: true,
+      requiresPassword: !!room.password
+    });
+
+  });
+
   // ================= CREATE ROOM =================
   socket.on("create-room", ({ roomId, username, password }) => {
 
@@ -51,6 +70,7 @@ io.on("connection", (socket) => {
     });
 
     socket.emit("room-created", { roomId });
+    socket.emit("host-status", true);
 
     io.to(roomId).emit("room-users", {
       users: rooms[roomId].users,
@@ -93,7 +113,7 @@ io.on("connection", (socket) => {
       host: room.host
     });
 
-    // Instant sync
+    // 🔥 instant sync
     const hostSocket = io.sockets.sockets.get(room.host);
     if (hostSocket && hostSocket.id !== socket.id) {
       hostSocket.emit("request-sync", socket.id);
@@ -151,7 +171,6 @@ io.on("connection", (socket) => {
 
     io.to(roomId).emit("system-message", `${socket.username} left`);
 
-    // Host transfer
     if (room.host === socket.id) {
       const newHost = room.users[0];
       if (newHost) {
