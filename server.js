@@ -12,43 +12,89 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
+/*
+Room structure:
+rooms = {
+  roomId: {
+    host: socketId,
+    password: string | null,
+    users: [{ id, username }]
+  }
+}
+*/
+
 const rooms = {};
 
 io.on("connection", (socket) => {
 
-  // ================= JOIN =================
-  socket.on("join-room", ({ roomId, username }) => {
+  // ================= CREATE ROOM =================
+  socket.on("create-room", ({ roomId, username, password }) => {
+
+    if (rooms[roomId]) {
+      socket.emit("room-error", "Room already exists");
+      return;
+    }
+
+    rooms[roomId] = {
+      host: socket.id,
+      password: password || null,
+      users: []
+    };
 
     socket.join(roomId);
     socket.roomId = roomId;
     socket.username = username;
-
-    if (!rooms[roomId]) {
-      rooms[roomId] = {
-        host: socket.id,
-        users: []
-      };
-    }
 
     rooms[roomId].users.push({
       id: socket.id,
       username
     });
 
-    const isHost = rooms[roomId].host === socket.id;
-    socket.emit("host-status", isHost);
+    socket.emit("room-created", { roomId });
 
-    io.to(roomId).emit("system-message", `${username} joined`);
-
-    // SEND USER LIST
     io.to(roomId).emit("room-users", {
       users: rooms[roomId].users,
       host: rooms[roomId].host
     });
 
-    // 🔥 INSTANT SYNC
-    const hostSocket = io.sockets.sockets.get(rooms[roomId].host);
+  });
 
+  // ================= JOIN ROOM =================
+  socket.on("join-room", ({ roomId, username, password }) => {
+
+    const room = rooms[roomId];
+
+    if (!room) {
+      socket.emit("room-error", "Room does not exist");
+      return;
+    }
+
+    if (room.password && room.password !== password) {
+      socket.emit("room-error", "Incorrect password");
+      return;
+    }
+
+    socket.join(roomId);
+    socket.roomId = roomId;
+    socket.username = username;
+
+    room.users.push({
+      id: socket.id,
+      username
+    });
+
+    const isHost = room.host === socket.id;
+    socket.emit("host-status", isHost);
+
+    io.to(roomId).emit("system-message", `${username} joined`);
+
+    io.to(roomId).emit("room-users", {
+      users: room.users,
+      host: room.host
+    });
+
+    // Instant sync
+    const hostSocket = io.sockets.sockets.get(room.host);
     if (hostSocket && hostSocket.id !== socket.id) {
       hostSocket.emit("request-sync", socket.id);
     }
@@ -63,31 +109,32 @@ io.on("connection", (socket) => {
     });
   });
 
-  // ================= VIDEO LOAD =================
+  // ================= VIDEO =================
   socket.on("set-video", ({ roomId, videoId }) => {
     if (rooms[roomId]?.host !== socket.id) return;
     io.to(roomId).emit("load-video", videoId);
   });
 
-  // ================= PLAY =================
   socket.on("video-play", ({ roomId, time, timestamp }) => {
     if (rooms[roomId]?.host !== socket.id) return;
     socket.to(roomId).emit("video-play", { time, timestamp });
   });
 
-  // ================= PAUSE =================
   socket.on("video-pause", ({ roomId, time, timestamp }) => {
     if (rooms[roomId]?.host !== socket.id) return;
     socket.to(roomId).emit("video-pause", { time, timestamp });
   });
 
-  // ================= SEEK =================
   socket.on("video-seek", ({ roomId, time }) => {
     if (rooms[roomId]?.host !== socket.id) return;
     socket.to(roomId).emit("video-seek", time);
   });
 
-  // ================= SYNC RESPONSE =================
+  socket.on("video-buffering", ({ roomId, time, timestamp }) => {
+    socket.to(roomId).emit("video-buffering", { time, timestamp });
+  });
+
+  // ================= SYNC =================
   socket.on("sync-response", ({ target, time }) => {
     io.to(target).emit("sync-video", { time });
   });
@@ -98,30 +145,27 @@ io.on("connection", (socket) => {
     const roomId = socket.roomId;
     if (!roomId || !rooms[roomId]) return;
 
-    rooms[roomId].users =
-      rooms[roomId].users.filter(u => u.id !== socket.id);
+    const room = rooms[roomId];
+
+    room.users = room.users.filter(u => u.id !== socket.id);
 
     io.to(roomId).emit("system-message", `${socket.username} left`);
 
-    // HOST CHANGE
-    if (rooms[roomId].host === socket.id) {
-
-      const newHost = rooms[roomId].users[0];
-
+    // Host transfer
+    if (room.host === socket.id) {
+      const newHost = room.users[0];
       if (newHost) {
-        rooms[roomId].host = newHost.id;
+        room.host = newHost.id;
         io.to(newHost.id).emit("host-status", true);
       }
-
     }
 
-    // UPDATE USER LIST
     io.to(roomId).emit("room-users", {
-      users: rooms[roomId].users,
-      host: rooms[roomId].host
+      users: room.users,
+      host: room.host
     });
 
-    if (rooms[roomId].users.length === 0) {
+    if (room.users.length === 0) {
       delete rooms[roomId];
     }
 
